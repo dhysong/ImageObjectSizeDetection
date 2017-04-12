@@ -205,6 +205,7 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
      */
     private static class MyHandler extends Handler {
         private final WeakReference<MainActivity> mActivity;
+        private String partialData = "";
 
         public MyHandler(MainActivity activity) {
             mActivity = new WeakReference<>(activity);
@@ -215,7 +216,18 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
             switch (msg.what) {
                 case UsbService.MESSAGE_FROM_SERIAL_PORT:
                     String data = (String) msg.obj;
-                    mActivity.get().display.append(data);
+
+                    int lfIndex = data.indexOf("\n");
+                    if(lfIndex > -1) {
+                        String fullVal = partialData + data.substring(0, lfIndex);
+                        mActivity.get().display.setText(fullVal);
+                        partialData = data.substring(lfIndex, data.length());
+                    }
+                    else {
+                        partialData += data;
+                    }
+
+                    //mActivity.get().display.append(data);
                     break;
             }
         }
