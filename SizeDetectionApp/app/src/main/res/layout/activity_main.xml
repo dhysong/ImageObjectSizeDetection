@@ -8,14 +8,20 @@
     android:paddingTop="16dp"
     tools:context="com.example.dhyso_000.sizedetectionapp.MainActivity">
 
+    <org.opencv.android.JavaCameraView
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent"
+        android:id="@+id/image_manipulations_activity_surface_view" />
+
     <TextView
         android:id="@+id/textView1"
         android:layout_width="match_parent"
-        android:layout_height="100dp"
+        android:layout_height="36dp"
         android:layout_centerHorizontal="true"
-        android:layout_marginTop="34dp"
-        android:background="#FFFFFF"
+        android:layout_marginTop="10dp"
+        android:background="#07000000"
         android:gravity="bottom"
+        android:textColor="#FFFF00"
         android:scrollbars="vertical" />
 
 
