@@ -7,6 +7,11 @@ import org.opencv.android.OpenCVLoader;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
+import org.opencv.core.Point;
+import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.android.CameraBridgeViewBase;
 import org.opencv.android.CameraBridgeViewBase.CvCameraViewListener2;
@@ -24,21 +29,35 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.support.v7.app.AppCompatActivity;
+import android.view.MotionEvent;
+import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
-public class MainActivity extends AppCompatActivity implements CvCameraViewListener2  {
+public class MainActivity extends AppCompatActivity implements CvCameraViewListener2, View.OnClickListener  {
 
     private UsbService usbService;
     private TextView display;
     private MyHandler mHandler;
 
     private CameraBridgeViewBase mOpenCvCameraView;
-    private Mat mIntermediateMat;
+    private Mat orig;
+    private Mat mRgba;
+    private Mat edges;
+    private Mat mGray;
+    private Mat img;
+    private List<MatOfPoint> contours;
+    private double[] previousDistances = new double[] {-99, -99, -99};
+    private Button btnMeasure;
+    private Button btnReset;
+    private boolean shouldProcess = false;
 
     private final ServiceConnection usbConnection = new ServiceConnection() {
         @Override
@@ -107,7 +126,39 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
         mOpenCvCameraView = (CameraBridgeViewBase) findViewById(R.id.image_manipulations_activity_surface_view);
         mOpenCvCameraView.setVisibility(CameraBridgeViewBase.VISIBLE);
         mOpenCvCameraView.setCvCameraViewListener(this);
+
+        btnMeasure = (Button)findViewById(R.id.button);
+        btnMeasure.setOnClickListener(MainActivity.this);
+
+        btnReset = (Button)findViewById(R.id.button2);
+        btnReset.setOnClickListener(MainActivity.this);
     }
+
+
+    @Override
+    public void onClick(View v) {
+        switch (v.getId()) {
+            case R.id.button:
+                if (mOpenCvCameraView != null)
+                    shouldProcess = true;
+
+                btnMeasure.setVisibility(View.INVISIBLE);
+                btnReset.setVisibility(View.VISIBLE);
+                break;
+            case R.id.button2:
+                if (mOpenCvCameraView != null) {
+                    shouldProcess = false;
+                    mOpenCvCameraView.enableView();
+                }
+
+                btnMeasure.setVisibility(View.VISIBLE);
+                btnReset.setVisibility(View.INVISIBLE);
+                break;
+            default:
+                break;
+        }
+    }
+
 
     @Override
     public void onResume() {
@@ -130,6 +181,9 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
         super.onPause();
         unregisterReceiver(mUsbReceiver);
         unbindService(usbConnection);
+
+        if (mOpenCvCameraView != null)
+            mOpenCvCameraView.disableView();
     }
 
     public void onDestroy() {
@@ -139,39 +193,101 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
     }
 
     public void onCameraViewStarted(int width, int height) {
-        mIntermediateMat = new Mat();
+        orig = new Mat(height, width, CvType.CV_8UC4);
+        mRgba = new Mat(height, width, CvType.CV_8UC4);
+        edges = new Mat(height, width, CvType.CV_8UC4);
+        mGray = new Mat(height, width, CvType.CV_8UC1);
+        img = new Mat();
     }
 
     public void onCameraViewStopped() {
-        // Explicitly deallocate Mats
-        if (mIntermediateMat != null)
-            mIntermediateMat.release();
-
-        mIntermediateMat = null;
+        orig.release();
+        mRgba.release();
+        mGray.release();
+        edges.release();
+        img.release();
     }
 
     public Mat onCameraFrame(CvCameraViewFrame inputFrame) {
-        Mat rgba = inputFrame.rgba();
+        orig = inputFrame.rgba();
+        mRgba = inputFrame.gray();
 
-        /*Size sizeRgba = rgba.size();
+        contours = new ArrayList<MatOfPoint>();
+        img = new Mat();
 
-        Mat rgbaInnerWindow;
+        Imgproc.Canny(mRgba, edges, 50, 200);
 
-        int rows = (int) sizeRgba.height;
-        int cols = (int) sizeRgba.width;
+        Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(7,7), new Point(1,1));
 
-        int left = cols / 8;
-        int top = rows / 8;
+        Mat closed = new Mat();
 
-        int width = cols * 3 / 4;
-        int height = rows * 3 / 4;
+        Imgproc.morphologyEx(edges, closed, Imgproc.MORPH_CLOSE, kernel);
 
-        rgbaInnerWindow = rgba.submat(top, top + height, left, left + width);
-        Imgproc.Canny(rgbaInnerWindow, mIntermediateMat, 80, 90);
-        Imgproc.cvtColor(mIntermediateMat, rgbaInnerWindow, Imgproc.COLOR_GRAY2BGRA, 4);
-        rgbaInnerWindow.release();*/
+        Imgproc.findContours(edges.clone(), contours, img, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_SIMPLE, new Point(0, 0));
 
-        return rgba;
+        img.release();
+
+        for( int i = 0; i< contours.size(); i++ )
+        {
+            MatOfPoint2f contour = new MatOfPoint2f( contours.get(i).toArray() );
+            double approxDistance = Imgproc.arcLength(contour, true);
+            MatOfPoint2f approx2f = new MatOfPoint2f();
+            MatOfPoint approx = new MatOfPoint();
+            Imgproc.approxPolyDP(contour, approx2f,  0.02 * approxDistance, true);
+
+            approx2f.convertTo(approx, CvType.CV_32S);
+
+            if (approx.size().height == 4) {
+                MatOfPoint points = new MatOfPoint( approx.toArray() );
+
+                Rect rect = Imgproc.boundingRect(points);
+
+                if(rect.height > 200 && rect.width > 200) {
+                    Imgproc.drawContours(orig, contours, i, new Scalar(0, 255, 0), 6);
+
+                    double focalLength = 31;
+                    double sensorWidth = 33.5;
+                    double sensorHeight = 16.5;
+                    double distance = 0;
+                    boolean distanceStable = true;
+                    try {
+                        distance = Double.parseDouble(mHandler.getFullData());
+                        double[] newDistances = new double[3];
+                        for (int j = 0; i < previousDistances.length; i++) {
+                            if (distanceStable && Math.abs(previousDistances[j] - distance) > 5) {
+                                distanceStable = false;
+                            }
+                            if(j > 0) {
+                                newDistances[j - 1] = previousDistances[j];
+                            }
+                        }
+                        newDistances[2] = distance;
+                    }
+                    catch (NumberFormatException e) {
+                    }
+
+                    if (shouldProcess && distanceStable && distance > 0) {
+                        double objectWidth = ((rect.width * sensorWidth * distance) / (focalLength * orig.width())) / 2.54;
+                        double objectHeight = ((rect.height * sensorHeight * distance) / (focalLength * orig.height())) / 2.54;
+
+                        int leftPadding = 20;
+                        int topPadding = 20;
+                        Core.putText(orig, String.format("height (px): %1$d", rect.height), new Point(rect.x + leftPadding, rect.y + 25 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("width (px): %1$d", rect.width), new Point(rect.x + leftPadding, rect.y + 50 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("height (in): %1$f", objectHeight), new Point(rect.x + leftPadding, rect.y + 75 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("width (in): %1$f", objectWidth), new Point(rect.x + leftPadding, rect.y + 100 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("distance (in): %1$f", distance / 2.54), new Point(rect.x + leftPadding, rect.y + 125 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("img height (px): %1$d", orig.height()), new Point(rect.x + leftPadding, rect.y + 150 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("img width (px): %1$d", orig.width()), new Point(rect.x + leftPadding, rect.y + 175 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+
+                        StopImageProcessing(orig);
+                    }
+
+                }
+            }
+        }
+
+        return orig;
     }
 
     private void startService(Class<?> service, ServiceConnection serviceConnection, Bundle extras) {
@@ -200,15 +316,21 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
         registerReceiver(mUsbReceiver, filter);
     }
 
+
     /*
      * This handler will be passed to UsbService. Data received from serial port is displayed through this handler
      */
     private static class MyHandler extends Handler {
         private final WeakReference<MainActivity> mActivity;
         private String partialData = "";
+        private String fullData = "0";
 
         public MyHandler(MainActivity activity) {
             mActivity = new WeakReference<>(activity);
+        }
+
+        public String getFullData(){
+            return fullData;
         }
 
         @Override
@@ -219,17 +341,29 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
 
                     int lfIndex = data.indexOf("\n");
                     if(lfIndex > -1) {
-                        String fullVal = partialData + data.substring(0, lfIndex);
-                        mActivity.get().display.setText(fullVal);
+                        fullData = partialData + data.substring(0, lfIndex);
+                        mActivity.get().display.setText("Current Distance: " + fullData + " (in)");
                         partialData = data.substring(lfIndex, data.length());
                     }
                     else {
                         partialData += data;
                     }
-
-                    //mActivity.get().display.append(data);
                     break;
             }
         }
     }
+
+    private void StopImageProcessing(final Mat img) {
+        Thread t = new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+                if (mOpenCvCameraView != null)
+                    mOpenCvCameraView.disableView();
+            }
+        });
+
+        t.start();
+    }
+
 }
