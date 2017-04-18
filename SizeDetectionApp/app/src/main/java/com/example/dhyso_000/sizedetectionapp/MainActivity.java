@@ -29,7 +29,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.support.v7.app.AppCompatActivity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -44,7 +43,8 @@ import java.util.Set;
 public class MainActivity extends AppCompatActivity implements CvCameraViewListener2, View.OnClickListener  {
 
     private UsbService usbService;
-    private TextView display;
+    private TextView txtDistance;
+    private TextView txtMeasurement;
     private MyHandler mHandler;
 
     private CameraBridgeViewBase mOpenCvCameraView;
@@ -57,7 +57,13 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
     private double[] previousDistances = new double[] {-99, -99, -99};
     private Button btnMeasure;
     private Button btnReset;
+    private Button btnCalibrate;
     private boolean shouldProcess = false;
+    private Intent intent;
+    private double sensorWidth = 34;
+    private double sensorHeight = 19;
+    private int minWidth = 100;
+    private int minHeight = 100;
 
     private final ServiceConnection usbConnection = new ServiceConnection() {
         @Override
@@ -121,7 +127,8 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
 
         mHandler = new MyHandler(this);
 
-        display = (TextView) findViewById(R.id.textView1);
+        txtDistance = (TextView) findViewById(R.id.textView1);
+        txtMeasurement = (TextView) findViewById(R.id.textView5);
 
         mOpenCvCameraView = (CameraBridgeViewBase) findViewById(R.id.image_manipulations_activity_surface_view);
         mOpenCvCameraView.setVisibility(CameraBridgeViewBase.VISIBLE);
@@ -132,6 +139,9 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
 
         btnReset = (Button)findViewById(R.id.button2);
         btnReset.setOnClickListener(MainActivity.this);
+
+        btnCalibrate = (Button)findViewById(R.id.button4);
+        btnCalibrate.setOnClickListener(MainActivity.this);
     }
 
 
@@ -150,13 +160,34 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
                     shouldProcess = false;
                     mOpenCvCameraView.enableView();
                 }
+                
+                txtMeasurement.setText("");
 
                 btnMeasure.setVisibility(View.VISIBLE);
                 btnReset.setVisibility(View.INVISIBLE);
                 break;
+            case R.id.button4:
+                intent = new Intent(MainActivity.this, CalibrateActivity.class);
+                intent.putExtra("sensorWidth", sensorWidth);
+                intent.putExtra("sensorHeight", sensorHeight);
+                intent.putExtra("minWidth", minWidth);
+                intent.putExtra("minHeight", minHeight);
+                startActivityForResult(intent, 0);
+                break;
             default:
                 break;
         }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        //Retrieve data in the intent
+        Bundle extra = data.getExtras();
+        sensorWidth = extra.getDouble("sensorWidth");
+        sensorHeight = extra.getDouble("sensorHeight");
+        minWidth = extra.getInt("minWidth");
+        minHeight = extra.getInt("minHeight");
     }
 
 
@@ -241,13 +272,12 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
                 MatOfPoint points = new MatOfPoint( approx.toArray() );
 
                 Rect rect = Imgproc.boundingRect(points);
+                boolean isCentered = rect.contains(new Point(orig.width() / 2, orig.height() / 2));
 
-                if(rect.height > 200 && rect.width > 200) {
-                    Imgproc.drawContours(orig, contours, i, new Scalar(0, 255, 0), 6);
+                if(isCentered && rect.height > 100 && rect.width > 100) {
+                    Imgproc.drawContours(orig, contours, i, new Scalar(0, 255, 0), 2);
 
                     double focalLength = 31;
-                    double sensorWidth = 33.5;
-                    double sensorHeight = 16.5;
                     double distance = 0;
                     boolean distanceStable = true;
                     try {
@@ -267,20 +297,23 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
                     }
 
                     if (shouldProcess && distanceStable && distance > 0) {
+                        shouldProcess = false;
+
                         double objectWidth = ((rect.width * sensorWidth * distance) / (focalLength * orig.width())) / 2.54;
                         double objectHeight = ((rect.height * sensorHeight * distance) / (focalLength * orig.height())) / 2.54;
 
-                        int leftPadding = 20;
+                        /*int leftPadding = 20;
                         int topPadding = 20;
-                        Core.putText(orig, String.format("height (px): %1$d", rect.height), new Point(rect.x + leftPadding, rect.y + 25 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("width (px): %1$d", rect.width), new Point(rect.x + leftPadding, rect.y + 50 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("height (in): %1$f", objectHeight), new Point(rect.x + leftPadding, rect.y + 75 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("width (in): %1$f", objectWidth), new Point(rect.x + leftPadding, rect.y + 100 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("distance (in): %1$f", distance / 2.54), new Point(rect.x + leftPadding, rect.y + 125 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("img height (px): %1$d", orig.height()), new Point(rect.x + leftPadding, rect.y + 150 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
-                        Core.putText(orig, String.format("img width (px): %1$d", orig.width()), new Point(rect.x + leftPadding, rect.y + 175 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 2);
+                        Core.putText(orig, String.format("height (px): %1$d", rect.height), new Point(rect.x + leftPadding, rect.y + 25 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("width (px): %1$d", rect.width), new Point(rect.x + leftPadding, rect.y + 50 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("height (in): %1$f", objectHeight), new Point(rect.x + leftPadding, rect.y + 75 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("width (in): %1$f", objectWidth), new Point(rect.x + leftPadding, rect.y + 100 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("distance (in): %1$f", distance / 2.54), new Point(rect.x + leftPadding, rect.y + 125 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("img height (px): %1$d", orig.height()), new Point(rect.x + leftPadding, rect.y + 150 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);
+                        Core.putText(orig, String.format("img width (px): %1$d", orig.width()), new Point(rect.x + leftPadding, rect.y + 175 + topPadding), 3, 1, new Scalar(0, 255, 0, 255), 1);*/
 
-                        StopImageProcessing(orig);
+
+                        StopImageProcessing(objectWidth, objectHeight);
                     }
 
                 }
@@ -342,7 +375,7 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
                     int lfIndex = data.indexOf("\n");
                     if(lfIndex > -1) {
                         fullData = partialData + data.substring(0, lfIndex);
-                        mActivity.get().display.setText("Current Distance: " + fullData + " (in)");
+                        mActivity.get().txtDistance.setText("Current Distance: " + fullData + " (in)");
                         partialData = data.substring(lfIndex, data.length());
                     }
                     else {
@@ -353,13 +386,21 @@ public class MainActivity extends AppCompatActivity implements CvCameraViewListe
         }
     }
 
-    private void StopImageProcessing(final Mat img) {
+    private void StopImageProcessing(final double objectWidth, final double objectHeight) {
         Thread t = new Thread(new Runnable() {
 
             @Override
             public void run() {
                 if (mOpenCvCameraView != null)
                     mOpenCvCameraView.disableView();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        txtMeasurement.setText(String.format("width (in): %1$f%nheight (in): %2$f", objectWidth, objectHeight));
+                    }
+                });
+
             }
         });
 
